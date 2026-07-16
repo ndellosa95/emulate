@@ -26,6 +26,7 @@ export interface ErrorHookSeedConfig {
 }
 
 export interface EmulatorSeedConfig {
+  config?: WorkOSSeedConfig['config'];
   apiKeys?: WorkOSSeedConfig['apiKeys'];
   organizations?: WorkOSSeedConfig['organizations'];
   users?: WorkOSSeedConfig['users'];

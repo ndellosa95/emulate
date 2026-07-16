@@ -1,6 +1,7 @@
 import { createSign, createVerify, generateKeyPairSync, type KeyObject } from 'node:crypto';
 
 export interface JWTPayload {
+  [claim: string]: unknown;
   sub: string;
   sid?: string;
   org_id?: string;
@@ -17,6 +18,8 @@ export interface JWTPayload {
 interface SignOptions {
   expiresIn?: number;
 }
+
+type JWTSignPayload = Omit<JWTPayload, 'iss' | 'iat' | 'exp'> & Pick<JWTPayload, 'sub' | 'aud'>;
 
 function base64url(input: Buffer | string): string {
   const buf = typeof input === 'string' ? Buffer.from(input) : input;
@@ -43,7 +46,7 @@ export class JWTManager {
     this.kid = `workos_emulate_${Date.now()}`;
   }
 
-  sign(payload: Omit<JWTPayload, 'iss' | 'iat' | 'exp'>, options?: SignOptions): string {
+  sign(payload: JWTSignPayload, options?: SignOptions): string {
     const now = Math.floor(Date.now() / 1000);
     const expiresIn = options?.expiresIn ?? 3600;
 

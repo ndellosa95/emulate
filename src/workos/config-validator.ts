@@ -17,6 +17,19 @@ export interface ConfigValidationResult {
 export function validateSeedConfig(config: WorkOSSeedConfig): ConfigValidationResult {
   const errors: ConfigValidationError[] = [];
 
+  if (
+    config.config?.jwt_template?.custom_claims !== undefined &&
+    (config.config.jwt_template.custom_claims === null ||
+      typeof config.config.jwt_template.custom_claims !== 'object' ||
+      Array.isArray(config.config.jwt_template.custom_claims))
+  ) {
+    errors.push({
+      path: 'config.jwt_template.custom_claims',
+      message: 'custom_claims must be an object if provided',
+      value: config.config.jwt_template.custom_claims,
+    });
+  }
+
   // Validate users
   if (config.users) {
     if (!Array.isArray(config.users)) {

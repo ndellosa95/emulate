@@ -203,6 +203,11 @@ export interface WorkOSSeedApiKey {
 export type WorkOSSeedApiKeyAuthMap = Record<string, { environment: string }>;
 
 export interface WorkOSSeedConfig {
+  config?: {
+    jwt_template?: {
+      custom_claims?: Record<string, unknown>;
+    };
+  };
   organizations?: WorkOSSeedOrganization[];
   users?: WorkOSSeedUser[];
   connections?: WorkOSSeedConnection[];
@@ -228,6 +233,13 @@ export function seedFromConfig(store: Store, _baseUrl: string, config: WorkOSSee
   }
 
   const ws = getWorkOSStore(store);
+
+  if (config.config?.jwt_template?.custom_claims) {
+    store.setData(STORE_KEYS.jwtTemplate, {
+      object: 'jwt_template',
+      custom_claims: config.config.jwt_template.custom_claims,
+    });
+  }
 
   if (config.users) {
     for (const userConfig of config.users) {

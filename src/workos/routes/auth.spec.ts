@@ -15,11 +15,13 @@ function createTestApp() {
 describe('Auth routes', () => {
   let app: ReturnType<typeof createTestApp>['app'];
   let store: Store;
+  let jwt: ReturnType<typeof createTestApp>['jwt'];
 
   beforeEach(() => {
     const server = createTestApp();
     app = server.app;
     store = server.store;
+    jwt = server.jwt;
   });
 
   const req = (path: string, init?: RequestInit) => app.request(path, { headers, ...init });
@@ -44,6 +46,55 @@ describe('Auth routes', () => {
       password_hash: null,
       impersonator: opts?.impersonator ?? null,
     });
+  }
+
+  async function authenticateWithTemplate(metadata: Record<string, string>, customClaims: Record<string, unknown>) {
+    const ws = getWorkOSStore(store);
+    const user = await createUser(`template-${metadata.type ?? 'missing'}@test.com`);
+    const organization = ws.organizations.insert({
+      object: 'organization',
+      name: 'Template Organization',
+      external_id: null,
+      metadata,
+      stripe_customer_id: null,
+    });
+    ws.organizationMemberships.insert({
+      object: 'organization_membership',
+      organization_id: organization.id,
+      user_id: user.id,
+      role: { slug: 'member' },
+      status: 'active',
+      external_id: null,
+      metadata: {},
+    });
+    const authCode = ws.authCodes.insert({
+      user_id: user.id,
+      organization_id: organization.id,
+      code: `auth_code_${metadata.type ?? 'missing'}`,
+      redirect_uri: 'http://localhost:3000/callback',
+      expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      code_challenge: null,
+      code_challenge_method: null,
+    });
+
+    const templateRes = await req('/user_management/jwt_template', {
+      method: 'PUT',
+      body: JSON.stringify({ custom_claims: customClaims }),
+    });
+    expect(templateRes.status).toBe(200);
+
+    const tokenRes = await app.request('/user_management/authenticate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        grant_type: 'authorization_code',
+        code: authCode.code,
+        client_id: 'client_real',
+      }),
+    });
+    expect(tokenRes.status).toBe(200);
+    const body = await json(tokenRes);
+    return { claims: jwt.verify(body.access_token), user, organization };
   }
 
   it('authorize redirects with code when user exists', async () => {
@@ -165,6 +216,48 @@ describe('Auth routes', () => {
     expect(body.authentication_method).toBe('MicrosoftOAuth');
     // ...and the internal field never leaks into the user object.
     expect(body.user.oauth_provider).toBeUndefined();
+  });
+
+  it('adds rendered JWT template claims from organization metadata', async () => {
+    const { claims } = await authenticateWithTemplate(
+      { type: 'oem' },
+      { account_type: '{{ organization.metadata.type }}' },
+    );
+
+    expect(claims.account_type).toBe('oem');
+  });
+
+  it('omits JWT template claims whose value cannot be resolved', async () => {
+    const { claims } = await authenticateWithTemplate({}, { account_type: '{{ organization.metadata.type }}' });
+
+    expect(claims).not.toHaveProperty('account_type');
+  });
+
+  it('does not let JWT template claims override reserved claims', async () => {
+    const { claims, user, organization } = await authenticateWithTemplate(
+      { type: 'oem' },
+      {
+        sub: 'user_spoofed',
+        sid: 'session_spoofed',
+        org_id: 'org_spoofed',
+        role: 'admin',
+        permissions: ['everything'],
+        aud: 'client_spoofed',
+        iss: 'https://spoofed.test',
+        iat: 0,
+        exp: 1,
+      },
+    );
+
+    expect(claims.sub).toBe(user.id);
+    expect(claims.sid).not.toBe('session_spoofed');
+    expect(claims.org_id).toBe(organization.id);
+    expect(claims.role).toBe('member');
+    expect(claims.permissions).toBeUndefined();
+    expect(claims.aud).toBe('client_real');
+    expect(claims.iss).toBe('http://localhost:0');
+    expect(claims.iat).toBeGreaterThan(0);
+    expect(claims.exp).toBeGreaterThan(claims.iat);
   });
 
   it('authorize rejects non-localhost redirect_uri', async () => {

@@ -19,6 +19,7 @@ import {
 import type { EventBus } from '../event-bus.js';
 import { STORE_KEYS, STORE_KEY_PREFIXES } from '../constants.js';
 import { renderLoginPage } from '../login-page.js';
+import { renderCustomClaims } from '../jwt-template.js';
 
 interface PendingAuth {
   user_id: string;
@@ -547,7 +548,17 @@ export function authRoutes(ctx: RouteContext): void {
       }
     }
 
+    const organization = organizationId ? ws.organizations.get(organizationId) : undefined;
+    const template = store.getData<{ custom_claims?: Record<string, unknown> }>(STORE_KEYS.jwtTemplate);
+    const customClaims = renderCustomClaims(template?.custom_claims, {
+      user: updatedUser,
+      organization,
+      role: roleSlug,
+      permissions: permissionSlugs,
+    });
+
     const accessToken = jwt.sign({
+      ...customClaims,
       sub: user.id,
       sid: session.id,
       org_id: organizationId ?? undefined,

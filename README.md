@@ -157,6 +157,8 @@ users:
 
 organizations:
   - name: Acme Corp
+    metadata:
+      type: oem
     domains:
       - domain: acme.com
         state: verified
@@ -171,7 +173,16 @@ permissions:
     name: Read Posts
   - slug: posts:write
     name: Write Posts
+
+config:
+  jwt_template:
+    custom_claims:
+      account_type: '{{ organization.metadata.type }}'
 ```
+
+JWT template custom claims are rendered into every user access token. Simple dotted paths can
+reference the authenticated `user`, `organization`, `role`, or `permissions`; claims whose value
+cannot be resolved are omitted.
 
 For OAuth-based logins (`authorization_code`, `refresh_token`, `device_code`), the authenticate
 response omits `authentication_method` by default: the hosted authorize flow carries no provider
