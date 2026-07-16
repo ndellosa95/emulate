@@ -41,6 +41,11 @@ export interface EmulatorSeedConfig {
 
 export interface EmulatorOptions {
   port?: number;
+  // Public base URL the emulator identifies as: it becomes the JWT `iss` claim and the base
+  // for self-referential URLs. Defaults to http://localhost:<port>. Override it when clients
+  // reach the emulator under a different host than localhost (e.g. a Docker service name), so
+  // the issuer they verify against matches the one stamped on the token.
+  baseUrl?: string;
   seed?: EmulatorSeedConfig;
   interactiveAuth?: boolean;
   webhookRetryConfig?: {
@@ -66,7 +71,7 @@ export interface Emulator {
 
 export async function createEmulator(options: EmulatorOptions = {}): Promise<Emulator> {
   const port = options.port ?? 4100;
-  const baseUrl = `http://localhost:${port}`;
+  const baseUrl = options.baseUrl ?? `http://localhost:${port}`;
 
   // `apiKeys` may be the legacy auth allow-list map or an array of API key resources.
   // - map form: use it as the allow-list.
@@ -153,9 +158,11 @@ export async function createEmulator(options: EmulatorOptions = {}): Promise<Emu
   // Resolve actual port (important for port: 0)
   const addr = httpServer.address();
   const actualPort = typeof addr === 'object' && addr ? addr.port : port;
-  const url = `http://localhost:${actualPort}`;
+  // An explicit baseUrl wins (the caller fixed the public identity); otherwise reflect the
+  // actually-bound localhost port, which matters when port: 0 lets the OS pick one.
+  const url = options.baseUrl ?? `http://localhost:${actualPort}`;
 
-  // Update JWT issuer to reflect the actual bound URL (matters when port: 0)
+  // Update JWT issuer to reflect the resolved public URL (matters when port: 0)
   jwt.issuer = url;
 
   const primaryApiKey = Object.keys(apiKeys)[0];

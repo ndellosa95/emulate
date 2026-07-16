@@ -9,6 +9,7 @@ import { validateSeedConfig, formatValidationErrors } from './workos/config-vali
 interface CliArgs {
   port: number;
   seed?: string;
+  baseUrl?: string;
   json: boolean;
   help: boolean;
   interactive: boolean;
@@ -25,6 +26,7 @@ Start a local WorkOS API emulator.
 
 Options:
   --port, -p <port>   Port to listen on (default: ${DEFAULT_PORT})
+  --base-url, -b <url>  Public base URL used as the JWT issuer (default: http://localhost:<port>)
   --seed, -s <path>   Path to seed config file (YAML or JSON)
   --interactive, -i   Show login pages for SSO/AuthKit (for E2E browser testing)
   --validate-config   Validate seed config file without starting server
@@ -82,6 +84,18 @@ function parseArgs(argv: string[]): CliArgs {
 
     if (arg.startsWith('--seed=')) {
       parsed.seed = arg.slice('--seed='.length);
+      continue;
+    }
+
+    if (arg === '--base-url' || arg === '-b') {
+      const value = argv[++i];
+      if (!value) throw new Error(`${arg} requires a value`);
+      parsed.baseUrl = value;
+      continue;
+    }
+
+    if (arg.startsWith('--base-url=')) {
+      parsed.baseUrl = arg.slice('--base-url='.length);
       continue;
     }
 
@@ -161,6 +175,7 @@ async function main(): Promise<void> {
 
   const emulator = await createEmulator({
     port: argv.port,
+    baseUrl: argv.baseUrl,
     seed: seedConfig,
     interactiveAuth: argv.interactive,
   });
