@@ -135,6 +135,87 @@ describe('Auth routes', () => {
     expect(body.authentication_method).toBe('Password');
   });
 
+  it('password grant authenticates into a single active org and scopes the token', async () => {
+    const ws = getWorkOSStore(store);
+    await req('/user_management/users', {
+      method: 'POST',
+      body: JSON.stringify({ email: 'solo@test.com', password: 'secret' }),
+    });
+    const user = ws.users.findOneBy('email', 'solo@test.com')!;
+    const organization = ws.organizations.insert({
+      object: 'organization',
+      name: 'Solo Org',
+      external_id: null,
+      metadata: { type: 'oem' },
+      stripe_customer_id: null,
+    });
+    ws.organizationMemberships.insert({
+      object: 'organization_membership',
+      organization_id: organization.id,
+      user_id: user.id,
+      role: { slug: 'member' },
+      status: 'active',
+      external_id: null,
+      metadata: {},
+    });
+    await req('/user_management/jwt_template', {
+      method: 'PUT',
+      body: JSON.stringify({ custom_claims: { account_type: '{{ organization.metadata.type }}' } }),
+    });
+
+    const res = await app.request('/user_management/authenticate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ grant_type: 'password', email: 'solo@test.com', password: 'secret' }),
+    });
+    expect(res.status).toBe(200);
+    const body = await json(res);
+    expect(body.organization_id).toBe(organization.id);
+    // The org-metadata-derived custom claim only renders when the login is org-scoped.
+    expect(jwt.verify(body.access_token).account_type).toBe('oem');
+  });
+
+  it('password grant requires organization selection when the user has multiple active orgs', async () => {
+    const ws = getWorkOSStore(store);
+    await req('/user_management/users', {
+      method: 'POST',
+      body: JSON.stringify({ email: 'multi@test.com', password: 'secret' }),
+    });
+    const user = ws.users.findOneBy('email', 'multi@test.com')!;
+    const orgIds = ['Org One', 'Org Two'].map((name) => {
+      const org = ws.organizations.insert({
+        object: 'organization',
+        name,
+        external_id: null,
+        metadata: {},
+        stripe_customer_id: null,
+      });
+      ws.organizationMemberships.insert({
+        object: 'organization_membership',
+        organization_id: org.id,
+        user_id: user.id,
+        role: { slug: 'member' },
+        status: 'active',
+        external_id: null,
+        metadata: {},
+      });
+      return org.id;
+    });
+
+    const res = await app.request('/user_management/authenticate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ grant_type: 'password', email: 'multi@test.com', password: 'secret' }),
+    });
+    // 403 + organization_selection_required is what the WorkOS SDK turns into an
+    // AuthenticationException carrying the pending token for the follow-up selection grant.
+    expect(res.status).toBe(403);
+    const body = await json(res);
+    expect(body.code).toBe('organization_selection_required');
+    expect(body.pending_authentication_token).toBeTruthy();
+    expect((body.organizations as { id: string }[]).map((o) => o.id).sort()).toEqual([...orgIds].sort());
+  });
+
   it('rejects invalid password', async () => {
     await req('/user_management/users', {
       method: 'POST',

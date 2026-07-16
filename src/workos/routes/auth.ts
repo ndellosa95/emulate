@@ -17,6 +17,7 @@ import {
   formatAuthChallenge,
 } from '../helpers.js';
 import type { EventBus } from '../event-bus.js';
+import type { WorkOSOrganization } from '../entities.js';
 import { STORE_KEYS, STORE_KEY_PREFIXES } from '../constants.js';
 import { renderLoginPage } from '../login-page.js';
 import { renderCustomClaims } from '../jwt-template.js';
@@ -224,6 +225,36 @@ export function authRoutes(ctx: RouteContext): void {
       );
     };
 
+    /**
+     * Require the caller to choose an organization before a session is minted. WorkOS returns
+     * this whenever an authenticated user belongs to more than one organization and none was
+     * specified; the client completes login with the urn:workos:oauth:grant-type:organization-selection
+     * grant, passing back this pending token plus the chosen organization_id. We record the
+     * primary auth method on the pending token so the eventual session reports it (not 'unknown').
+     */
+    const issueOrganizationSelectionChallenge = (
+      selUser: { id: string },
+      organizations: WorkOSOrganization[],
+      primaryMethod: string,
+    ) => {
+      const pendingToken = generateId('pending');
+      store.setData(`${STORE_KEY_PREFIXES.pendingAuth}${pendingToken}`, {
+        user_id: selUser.id,
+        organization_id: null,
+        auth_method: primaryMethod,
+      });
+      return c.json(
+        {
+          code: 'organization_selection_required',
+          message: 'The user must choose an organization to continue.',
+          pending_authentication_token: pendingToken,
+          user: formatUser(ws.users.get(selUser.id)!),
+          organizations: organizations.map((org) => ({ id: org.id, name: org.name })),
+        },
+        403,
+      );
+    };
+
     let user;
     let organizationId: string | null = null;
     let authMethod: string;
@@ -296,6 +327,24 @@ export function authRoutes(ctx: RouteContext): void {
           );
         }
         authMethod = 'Password';
+
+        // Resolve org context the way WorkOS does: exactly one active membership authenticates
+        // straight into that org; more than one requires the client to choose
+        // (organization_selection_required) before any session is minted. Skipping this leaves
+        // the session unscoped, so the access token carries no org_id/permissions and any
+        // org-metadata-derived custom claim (e.g. account_type) renders empty.
+        const activeMemberships = ws.organizationMemberships
+          .findBy('user_id', user.id)
+          .filter((m) => m.status === 'active');
+        if (activeMemberships.length > 1) {
+          const orgs = activeMemberships
+            .map((m) => ws.organizations.get(m.organization_id))
+            .filter((org): org is WorkOSOrganization => Boolean(org));
+          return issueOrganizationSelectionChallenge(user, orgs, 'Password');
+        }
+        if (activeMemberships.length === 1) {
+          organizationId = activeMemberships[0].organization_id;
+        }
 
         // A user with enrolled factors must clear a second factor before a session is issued:
         // hand back a pending token (recording 'Password' as the primary method) and a challenge.
